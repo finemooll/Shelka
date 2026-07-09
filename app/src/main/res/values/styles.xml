@@ -1,0 +1,3 @@
+<resources>
+    <style name="Theme.Shelka" parent="android:style/Theme.Material.Light.NoActionBar" />
+</resources>
