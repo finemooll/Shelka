@@ -55,8 +55,8 @@ class AppContainer(application: Application) {
     )
 
     val wordRepository: WordRepository = WordRepositoryImpl(database.wordDao(), wordImporter)
-    private val gameRepository = RoomGameRepository(database)
     private val teamLogoStorage = AndroidTeamLogoStorage(application)
+    private val gameRepository = RoomGameRepository(database, teamLogoStorage)
     val appInitializer: AppInitializer = AppInitializer(wordRepository, applicationScope)
     val newGameDependencies = NewGameViewModelFactory.Dependencies(
         wordRepository = wordRepository,

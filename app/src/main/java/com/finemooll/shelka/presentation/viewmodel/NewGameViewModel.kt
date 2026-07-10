@@ -11,6 +11,7 @@ import com.finemooll.shelka.domain.model.*
 import com.finemooll.shelka.domain.repository.WordRepository
 import com.finemooll.shelka.domain.usecase.*
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -58,7 +59,8 @@ class NewGameViewModel(
             val themes = wordRepository.getThemeSummaries().map { ThemeUiModel(it.themeId, it.themeName) }.distinctBy { it.id }
             mutableState.update { it.copy(availableThemes = themes, selectedThemeIds = themes.map { t -> t.id }.toSet(), isLoading = false, status = NewGameStatus.EditingTeams) }
             revalidate()
-        } catch (t: Throwable) { mutableState.update { it.copy(isLoading = false, fatalError = "Не удалось загрузить темы", status = NewGameStatus.Error("Не удалось загрузить темы")) } }
+        } catch (cancel: CancellationException) { throw cancel }
+        catch (t: Throwable) { mutableState.update { it.copy(isLoading = false, fatalError = "Не удалось загрузить темы", status = NewGameStatus.Error("Не удалось загрузить темы")) } }
     }
     fun addTeam() { mutableState.update { if (it.teams.size >= NewGameRules.maxTeams) it else it.copy(teams = it.teams + newTeam()) }; revalidate() }
     fun removeTeam(teamId: String) { mutableState.update { it.copy(teams = it.teams.filterNot { t -> t.id == teamId }) }; revalidate() }
@@ -83,7 +85,7 @@ class NewGameViewModel(
     fun clearThemes() { mutableState.update { it.copy(selectedThemeIds = emptySet()) }; revalidate() }
     fun continueToSettings(): Boolean { revalidate(); val ok = mutableState.value.validationErrors.teams.isValid; if (ok) mutableState.update { it.copy(status = NewGameStatus.EditingSettings) }; return ok }
     fun backToTeams() { mutableState.update { it.copy(status = NewGameStatus.EditingTeams) } }
-    fun dismissError() { mutableState.update { it.copy(fatalError = null, if (it.status is NewGameStatus.Error) NewGameStatus.EditingSettings else it.status) } }
+    fun dismissError() { mutableState.update { it.copy(fatalError = null, status = if (it.status is NewGameStatus.Error) NewGameStatus.EditingSettings else it.status) } }
     fun startGame() = viewModelScope.launch {
         if (mutableState.value.status == NewGameStatus.Creating || mutableState.value.createdGameId != null) return@launch
         if (appInitializationState.value !is AppInitializationState.Ready) { mutableState.update { it.copy(fatalError = "Слова ещё не готовы. Подождите завершения загрузки.") }; return@launch }
@@ -95,6 +97,8 @@ class NewGameViewModel(
             is WordSelectionResult.InsufficientWords -> mutableState.update { it.copy(isLoading = false, insufficientWords = true, fatalError = NewGameRules.insufficientWordsMessage, status = NewGameStatus.EditingSettings) }
             is WordSelectionResult.Success -> when (val result = createGame(NewGameDraft(state.teams, settings()), selected.words)) {
                 is CreateGameResult.Success -> mutableState.update { it.copy(isLoading = false, createdGameId = result.gameId, status = NewGameStatus.Created) }
+                is CreateGameResult.InvalidDraft -> mutableState.update { it.copy(isLoading = false, fatalError = "Проверьте настройки игры", status = NewGameStatus.EditingSettings) }
+                is CreateGameResult.WordConflict -> mutableState.update { it.copy(isLoading = false, fatalError = "Некоторые слова уже использованы. Повторите запуск игры.", status = NewGameStatus.EditingSettings) }
                 is CreateGameResult.Failure -> mutableState.update { it.copy(isLoading = false, fatalError = "Не удалось создать игру", status = NewGameStatus.Error("Не удалось создать игру")) }
             }
         }

@@ -29,7 +29,12 @@ class SelectWordsForNewGameUseCase(private val shuffler: WordShuffler = RandomWo
     }
 }
 
-sealed interface CreateGameResult { data class Success(val gameId: String) : CreateGameResult; data class Failure(val cause: Throwable) : CreateGameResult }
+sealed interface CreateGameResult {
+    data class Success(val gameId: String) : CreateGameResult
+    data class InvalidDraft(val errors: List<String>) : CreateGameResult
+    data class WordConflict(val wordIds: Set<String>) : CreateGameResult
+    data class Failure(val cause: Throwable) : CreateGameResult
+}
 
 class CreateGameSessionUseCase(private val gameRepository: GameRepository) {
     suspend operator fun invoke(draft: NewGameDraft, selectedWords: List<Word>): CreateGameResult = gameRepository.createGame(draft, selectedWords)

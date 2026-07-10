@@ -5,6 +5,7 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -56,7 +57,7 @@ fun NewGameScreen(onBackClick: () -> Unit, onHistoryClick: () -> Unit, onCreated
             item { Text("Настройки игры", style = MaterialTheme.typography.headlineMedium) }
             item { ChoiceRow("Количество слов", NewGameRules.allowedWordCounts.toList(), state.wordCount, vm::setWordCount) }
             item { ChoiceRow("Сложность", NewGameRules.allowedDifficulties.toList(), state.difficulty, vm::setDifficulty) }
-            item { ChoiceRow("Таймер", (20..180 step 10).toList(), state.timerSeconds, vm::setTimer) }
+            item { TimerSlider(state.timerSeconds, vm::setTimer) }
             item { Text("Темы", style = MaterialTheme.typography.titleLarge); state.validationErrors.settings.selectedThemes?.let { Text(it, color = MaterialTheme.colorScheme.error) }; Row { TextButton(vm::selectAllThemes) { Text("Выбрать все") }; TextButton(vm::clearThemes) { Text("Снять все") } } }
             items(state.availableThemes, key = { it.id }) { theme -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(theme.name); Checkbox(theme.id in state.selectedThemeIds, { _ -> vm.toggleTheme(theme.id) }) } }
             if (state.insufficientWords) item { Text(NewGameRules.insufficientWordsMessage, color = MaterialTheme.colorScheme.error); Button(onClick = onHistory) { Text("Открыть историю") } }
@@ -65,7 +66,26 @@ fun NewGameScreen(onBackClick: () -> Unit, onHistoryClick: () -> Unit, onCreated
     }
 }
 
-@Composable private fun ChoiceRow(label: String, values: List<Int>, selected: Int, onSelect: (Int) -> Unit) { Column { Text(label); Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) { values.forEach { FilterChip(selected = it == selected, onClick = { onSelect(it) }, label = { Text(it.toString()) }) } } } }
+@Composable private fun ChoiceRow(label: String, values: List<Int>, selected: Int, onSelect: (Int) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(label)
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+            items(values, key = { it }) { value -> FilterChip(selected = value == selected, onClick = { onSelect(value) }, label = { Text(value.toString()) }) }
+        }
+    }
+}
+
+@Composable private fun TimerSlider(selected: Int, onSelect: (Int) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Таймер: $selected секунд")
+        Slider(
+            value = selected.toFloat(),
+            onValueChange = { value -> onSelect((value / 10).toInt().coerceIn(2, 18) * 10) },
+            valueRange = 20f..180f,
+            steps = 15,
+        )
+    }
+}
 
 @Composable fun FirstRoundPlaceholderScreen(onBackClick: () -> Unit) {
     Scaffold { padding ->
