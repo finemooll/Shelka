@@ -32,6 +32,15 @@ interface WordDao {
     @Query("SELECT * FROM words WHERE difficulty = :difficulty AND themeId IN (:themeIds) ORDER BY id")
     suspend fun getByDifficultyAndThemeIds(difficulty: Int, themeIds: Set<String>): List<WordEntity>
 
+    @Query("""
+        SELECT * FROM words AS w
+        WHERE w.difficulty = :difficulty
+          AND w.themeId IN (:themeIds)
+          AND NOT EXISTS (SELECT 1 FROM game_selected_words AS gsw WHERE gsw.wordId = w.id)
+        ORDER BY w.id
+    """)
+    suspend fun getAvailableByDifficultyAndThemeIds(difficulty: Int, themeIds: Set<String>): List<WordEntity>
+
     @Query("SELECT themeId, themeName, difficulty, COUNT(*) AS count FROM words GROUP BY themeId, themeName, difficulty ORDER BY themeName, difficulty")
     suspend fun getThemeSummaryRows(): List<ThemeSummaryRow>
 
