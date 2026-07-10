@@ -5,4 +5,5 @@ sealed class ShelkaRoute(val route: String) {
     data object NewGame : ShelkaRoute("new_game")
     data object History : ShelkaRoute("history")
     data object Settings : ShelkaRoute("settings")
+    data object FirstRound : ShelkaRoute("first_round")
 }

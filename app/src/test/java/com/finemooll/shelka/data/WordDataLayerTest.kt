@@ -133,7 +133,12 @@ class WordDataLayerTest {
             validator = validator,
             database = db,
             stateStore = state,
-            postRepairHook = { wordDao().deleteByIds(setOf(canonicalId)) },
+            canonicalWordVerifier = object : CanonicalWordVerifier {
+                override suspend fun verify(database: AppDatabase, canonicalIds: Set<String>) {
+                    database.wordDao().deleteByIds(setOf(canonicalId))
+                    RoomCanonicalWordVerifier.verify(database, canonicalIds)
+                }
+            },
         )
 
         val result = imp.ensureImported()

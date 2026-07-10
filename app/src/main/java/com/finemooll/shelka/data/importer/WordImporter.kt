@@ -24,14 +24,32 @@ sealed interface WordDatabaseConsistencyError {
     data class FinalCanonicalMismatch(val missingIds: Set<String>, val unexpectedIds: Set<String>) : WordDatabaseConsistencyError
 }
 
-class WordImporter(
+internal interface CanonicalWordVerifier {
+    suspend fun verify(database: AppDatabase, canonicalIds: Set<String>)
+}
+
+internal object RoomCanonicalWordVerifier : CanonicalWordVerifier {
+    override suspend fun verify(database: AppDatabase, canonicalIds: Set<String>) {
+        val finalIds = database.wordDao().getAllIds().toSet()
+        if (finalIds != canonicalIds || database.wordDao().count() != canonicalIds.size) {
+            throw CanonicalRepairRollbackException(
+                WordDatabaseConsistencyError.FinalCanonicalMismatch(
+                    missingIds = canonicalIds - finalIds,
+                    unexpectedIds = finalIds - canonicalIds,
+                )
+            )
+        }
+    }
+}
+
+internal class WordImporter(
     private val assetDataSource: WordAssetDataSource,
     private val parser: WordJsonParser,
     private val validator: WordValidator,
     private val database: AppDatabase,
     private val stateStore: WordImportStateStore,
     private val mutex: Mutex = Mutex(),
-    private val postRepairHook: suspend AppDatabase.() -> Unit = {},
+    private val canonicalWordVerifier: CanonicalWordVerifier = RoomCanonicalWordVerifier,
 ) {
     suspend fun ensureImported(): ImportResult = mutex.withLock {
         try {
@@ -59,16 +77,7 @@ class WordImporter(
                     if (unexpected.isNotEmpty()) database.wordDao().deleteByIds(unexpected)
                     database.wordDao().insertAll(entities)
                     database.wordDao().updateAll(entities)
-                    postRepairHook(database)
-                    val finalIds = database.wordDao().getAllIds().toSet()
-                    if (finalIds != canonical || database.wordDao().count() != canonical.size) {
-                        throw CanonicalRepairRollbackException(
-                            WordDatabaseConsistencyError.FinalCanonicalMismatch(
-                                missingIds = canonical - finalIds,
-                                unexpectedIds = finalIds - canonical,
-                            )
-                        )
-                    }
+                    canonicalWordVerifier.verify(database, canonical)
                 }
             } catch (cause: CanonicalRepairRollbackException) {
                 return@withLock ImportResult.ConsistencyFailed(cause.error)

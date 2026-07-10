@@ -7,6 +7,10 @@ import com.finemooll.shelka.app.AppInitializer
 import com.finemooll.shelka.data.asset.AndroidWordAssetDataSource
 import com.finemooll.shelka.data.importer.DataStoreWordImportStateStore
 import com.finemooll.shelka.data.importer.WordImporter
+import com.finemooll.shelka.data.logo.AndroidTeamLogoStorage
+import com.finemooll.shelka.data.repository.RoomGameRepository
+import com.finemooll.shelka.domain.usecase.CreateGameSessionUseCase
+import com.finemooll.shelka.presentation.viewmodel.NewGameViewModelFactory
 import com.finemooll.shelka.data.json.DefaultWordValidator
 import com.finemooll.shelka.data.json.WordJsonParser
 import com.finemooll.shelka.data.local.database.AppDatabase
@@ -51,5 +55,13 @@ class AppContainer(application: Application) {
     )
 
     val wordRepository: WordRepository = WordRepositoryImpl(database.wordDao(), wordImporter)
+    private val gameRepository = RoomGameRepository(database)
+    private val teamLogoStorage = AndroidTeamLogoStorage(application)
     val appInitializer: AppInitializer = AppInitializer(wordRepository, applicationScope)
+    val newGameDependencies = NewGameViewModelFactory.Dependencies(
+        wordRepository = wordRepository,
+        logoStorage = teamLogoStorage,
+        createGame = CreateGameSessionUseCase(gameRepository),
+        appInitializationState = appInitializer.state,
+    )
 }
