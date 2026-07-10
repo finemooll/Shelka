@@ -17,7 +17,7 @@ import kotlinx.serialization.builtins.ListSerializer
 import org.junit.*
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import java.io.File
+import java.io.IOException
 
 @RunWith(RobolectricTestRunner::class)
 class WordDataLayerTest {
@@ -33,7 +33,15 @@ class WordDataLayerTest {
     @Before fun setup() { db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext<Context>(), AppDatabase::class.java).allowMainThreadQueries().build(); state = FakeState() }
     @After fun tearDown() { db.close() }
 
-    private fun realJson() = File("app/src/main/assets/words.json").readText()
+    private fun realJson(): String {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        return try {
+            context.assets.open("words.json").bufferedReader().use { it.readText() }
+        } catch (cause: IOException) {
+            Assert.fail("Expected real app/src/main/assets/words.json to be available through test assets: ${cause.message}")
+            error("unreachable")
+        }
+    }
     private fun realDtos() = parser.parse(realJson())
     private fun importer(json: String = realJson()) = WordImporter(FakeAsset(json), parser, validator, db, state)
 
@@ -112,6 +120,27 @@ class WordDataLayerTest {
         val json = kotlinx.serialization.json.Json.encodeToString(ListSerializer(WordDto.serializer()), invalid)
         Assert.assertTrue(importer(json).ensureImported() is ImportResult.ValidationFailed)
         Assert.assertEquals(0, db.wordDao().count())
+    }
+
+
+    @Test fun finalVerificationFailureRollsBackRepairTransaction() = runTest {
+        val canonicalId = realDtos().first().id
+        val unexpected = realDtos().first().toEntity().copy(id = "unexpected")
+        db.wordDao().insertAll(listOf(unexpected))
+        val imp = WordImporter(
+            assetDataSource = FakeAsset(realJson()),
+            parser = parser,
+            validator = validator,
+            database = db,
+            stateStore = state,
+            postRepairHook = { wordDao().deleteByIds(setOf(canonicalId)) },
+        )
+
+        val result = imp.ensureImported()
+
+        Assert.assertTrue(result is ImportResult.ConsistencyFailed)
+        Assert.assertEquals(listOf("unexpected"), db.wordDao().getAllIds())
+        Assert.assertFalse(state.imported)
     }
 
     @Test fun referencedUnexpectedWordReturnsConsistencyFailureAndPreservesHistory() = runTest {

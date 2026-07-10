@@ -9,6 +9,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
+private class CanonicalRepairRollbackException(val error: WordDatabaseConsistencyError) : RuntimeException()
+
 sealed interface ImportResult {
     data object Imported : ImportResult
     data object AlreadyImported : ImportResult
@@ -29,6 +31,7 @@ class WordImporter(
     private val database: AppDatabase,
     private val stateStore: WordImportStateStore,
     private val mutex: Mutex = Mutex(),
+    private val postRepairHook: suspend AppDatabase.() -> Unit = {},
 ) {
     suspend fun ensureImported(): ImportResult = mutex.withLock {
         try {
@@ -51,16 +54,27 @@ class WordImporter(
                 if (referenced.isNotEmpty()) return@withLock ImportResult.ConsistencyFailed(WordDatabaseConsistencyError.UnexpectedReferencedWords(referenced))
             }
             val entities = dtos.map { it.toEntity() }
-            val repair = database.withTransaction {
-                if (unexpected.isNotEmpty()) database.wordDao().deleteByIds(unexpected)
-                database.wordDao().insertAll(entities)
-                database.wordDao().updateAll(entities)
-                val finalIds = database.wordDao().getAllIds().toSet()
-                if (finalIds == canonical && database.wordDao().count() == canonical.size) null
-                else WordDatabaseConsistencyError.FinalCanonicalMismatch(canonical - finalIds, finalIds - canonical)
+            try {
+                database.withTransaction {
+                    if (unexpected.isNotEmpty()) database.wordDao().deleteByIds(unexpected)
+                    database.wordDao().insertAll(entities)
+                    database.wordDao().updateAll(entities)
+                    postRepairHook(database)
+                    val finalIds = database.wordDao().getAllIds().toSet()
+                    if (finalIds != canonical || database.wordDao().count() != canonical.size) {
+                        throw CanonicalRepairRollbackException(
+                            WordDatabaseConsistencyError.FinalCanonicalMismatch(
+                                missingIds = canonical - finalIds,
+                                unexpectedIds = finalIds - canonical,
+                            )
+                        )
+                    }
+                }
+            } catch (cause: CanonicalRepairRollbackException) {
+                return@withLock ImportResult.ConsistencyFailed(cause.error)
             }
-            if (repair != null) ImportResult.ConsistencyFailed(repair)
-            else { stateStore.setImported(true); ImportResult.Imported }
+            stateStore.setImported(true)
+            ImportResult.Imported
         } catch (cause: CancellationException) { throw cause }
         catch (cause: Throwable) { ImportResult.Failed(cause) }
     }
