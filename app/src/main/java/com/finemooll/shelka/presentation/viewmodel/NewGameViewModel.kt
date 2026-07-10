@@ -71,11 +71,16 @@ class NewGameViewModel(
     fun chooseLogo(teamId: String, uri: Uri) = viewModelScope.launch {
         val team = mutableState.value.teams.firstOrNull { it.id == teamId } ?: return@launch
         mutableState.update { it.copy(isLoading = true) }
-        when (val result = logoStorage.copyToInternalStorage(uri, teamId, team.logoPath)) {
-            is LogoStorageResult.Success -> updateTeam(teamId) { it.copy(logoPath = result.internalPath) }
-            is LogoStorageResult.Failure -> mutableState.update { it.copy(fatalError = result.message, status = NewGameStatus.Error(result.message)) }
+        try {
+            when (val result = logoStorage.copyToInternalStorage(uri, teamId, team.logoPath)) {
+                is LogoStorageResult.Success -> updateTeam(teamId) { it.copy(logoPath = result.internalPath) }
+                is LogoStorageResult.Failure -> mutableState.update { it.copy(fatalError = result.message, status = NewGameStatus.Error(result.message)) }
+            }
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } finally {
+            mutableState.update { it.copy(isLoading = false) }
         }
-        mutableState.update { it.copy(isLoading = false) }
     }
     fun setWordCount(v: Int) { mutableState.update { it.copy(wordCount = v) }; revalidate() }
     fun setDifficulty(v: Int) { mutableState.update { it.copy(difficulty = v) }; revalidate() }
@@ -92,15 +97,23 @@ class NewGameViewModel(
         revalidate(); val state = mutableState.value
         if (!state.validationErrors.teams.isValid || !state.validationErrors.settings.isValid) return@launch
         mutableState.update { it.copy(isLoading = true, status = NewGameStatus.Creating, insufficientWords = false) }
-        val available = getAvailableWords(state.difficulty, state.selectedThemeIds)
-        when (val selected = selectWords(state.wordCount, state.difficulty, state.selectedThemeIds, available)) {
-            is WordSelectionResult.InsufficientWords -> mutableState.update { it.copy(isLoading = false, insufficientWords = true, fatalError = NewGameRules.insufficientWordsMessage, status = NewGameStatus.EditingSettings) }
-            is WordSelectionResult.Success -> when (val result = createGame(NewGameDraft(state.teams, settings()), selected.words)) {
-                is CreateGameResult.Success -> mutableState.update { it.copy(isLoading = false, createdGameId = result.gameId, status = NewGameStatus.Created) }
-                is CreateGameResult.InvalidDraft -> mutableState.update { it.copy(isLoading = false, fatalError = "Проверьте настройки игры", status = NewGameStatus.EditingSettings) }
-                is CreateGameResult.WordConflict -> mutableState.update { it.copy(isLoading = false, fatalError = "Некоторые слова уже использованы. Повторите запуск игры.", status = NewGameStatus.EditingSettings) }
-                is CreateGameResult.Failure -> mutableState.update { it.copy(isLoading = false, fatalError = "Не удалось создать игру", status = NewGameStatus.Error("Не удалось создать игру")) }
+        try {
+            val available = getAvailableWords(state.difficulty, state.selectedThemeIds)
+            when (val selected = selectWords(state.wordCount, state.difficulty, state.selectedThemeIds, available)) {
+                is WordSelectionResult.InsufficientWords -> mutableState.update { it.copy(isLoading = false, insufficientWords = true, fatalError = NewGameRules.insufficientWordsMessage, status = NewGameStatus.EditingSettings) }
+                is WordSelectionResult.Success -> when (val result = createGame(NewGameDraft(state.teams, settings()), selected.words)) {
+                    is CreateGameResult.Success -> mutableState.update { it.copy(isLoading = false, createdGameId = result.gameId, status = NewGameStatus.Created) }
+                    is CreateGameResult.InvalidDraft -> mutableState.update { it.copy(isLoading = false, fatalError = "Проверьте настройки игры", status = NewGameStatus.EditingSettings) }
+                    is CreateGameResult.WordConflict -> mutableState.update { it.copy(isLoading = false, fatalError = "Некоторые слова уже использованы. Повторите запуск игры.", status = NewGameStatus.EditingSettings) }
+                    is CreateGameResult.LogoFailure -> mutableState.update { it.copy(isLoading = false, fatalError = result.message, status = NewGameStatus.EditingSettings) }
+                    is CreateGameResult.Failure -> mutableState.update { it.copy(isLoading = false, fatalError = "Не удалось создать игру", status = NewGameStatus.Error("Не удалось создать игру")) }
+                }
             }
+        } catch (cancel: CancellationException) {
+            mutableState.update { it.copy(isLoading = false, status = NewGameStatus.EditingSettings) }
+            throw cancel
+        } catch (t: Throwable) {
+            mutableState.update { it.copy(isLoading = false, fatalError = "Не удалось подготовить игру", status = NewGameStatus.EditingSettings) }
         }
     }
 }

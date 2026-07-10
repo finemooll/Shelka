@@ -24,7 +24,7 @@ The first round is stored with `currentRoundIndex = 0`, matching zero-based roun
 
 `TeamLogoStorage` copies a selected Photo Picker `Uri` into internal app storage under a draft logo directory using generated safe filenames. The external URI is never the final `logoPath`. Replacing a draft logo removes the previous draft file only after canonical-path checks against the draft root.
 
-Successful game creation adopts draft logos into `team_logos/games/<gameId>/<teamId>/...` and persists only that stable internal path. If adoption succeeds but creation later fails, newly adopted stable files are cleaned up. Persisted game logos are never deleted by draft replacement cleanup.
+Successful game creation prepares stable logo copies in `team_logos/games/<gameId>/<teamId>/...` and persists only those stable internal paths. The original draft file is kept until the Room transaction succeeds, so failed creation remains retryable. If creation fails after a stable copy is prepared, only the new stable copy is deleted. Once creation succeeds, the original draft file is removed and the stable game logo remains. Persisted game logos are never deleted by draft replacement cleanup.
 
 ## Word availability and selection
 
@@ -38,4 +38,4 @@ If there are not enough eligible words, no game rows are inserted and the UI sho
 
 ## Persistence
 
-`RoomGameRepository.createGame` performs one Room transaction. It inserts the game session, ordered teams, exactly two ordered players per team, and selected words with `(gameId, wordId)` rows. Any failure rolls back the whole setup. Coroutine cancellation is rethrown instead of converted into an ordinary failure.
+`RoomGameRepository.createGame` performs one Room transaction. It inserts the game session, ordered teams, exactly two ordered players per team, and selected words with `(gameId, wordId)` rows. Any failure rolls back the whole setup. Logo I/O failures are returned as structured logo failures rather than invalid draft errors. Coroutine cancellation is rethrown instead of converted into an ordinary failure.

@@ -33,6 +33,7 @@ sealed interface CreateGameResult {
     data class Success(val gameId: String) : CreateGameResult
     data class InvalidDraft(val errors: List<String>) : CreateGameResult
     data class WordConflict(val wordIds: Set<String>) : CreateGameResult
+    data class LogoFailure(val message: String, val cause: Throwable? = null) : CreateGameResult
     data class Failure(val cause: Throwable) : CreateGameResult
 }
 

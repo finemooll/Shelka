@@ -65,6 +65,33 @@ class RoomGameRepositoryTest {
         assertEquals(1, db.gameHistoryDao().gameSessionCount())
     }
 
+    @Test fun failedTransactionKeepsDraftLogoDeletesStableCopyAndRetrySucceeds() = runTest {
+        seedWords(20)
+        val draft = draftWithLogo("draft-logo")
+        db.gameHistoryDao().insertGameSession(GameSessionEntity("existing", 1, 1, null, GameSessionStatus.IN_PROGRESS, 20, 1, 60, 0))
+        db.gameHistoryDao().insertTeam(TeamEntity("existing-team", "existing", "Existing", null, 0))
+        db.gameHistoryDao().insertSelectedWord(GameSelectedWordEntity("existing", "w1", 0))
+
+        assertTrue(repo.createGame(draft, words(20)) is CreateGameResult.WordConflict)
+        assertTrue("draft must survive failed creation", logos.drafts.contains("draft-logo"))
+        assertTrue("stable copy must be cleaned after failure", logos.stableDeleted.isNotEmpty())
+
+        val retryWords = words(20).drop(1) + Word("w21", "word21", "theme1", "Theme 1", 1)
+        db.wordDao().insertAll(listOf(WordEntity("w21", "word21", "theme1", "Theme 1", 1)))
+        val result = repo.createGame(draft, retryWords) as CreateGameResult.Success
+        val persistedLogo = db.gameHistoryDao().getTeamsForGame(result.gameId).first().logoPath!!
+        assertFalse(persistedLogo.contains("team_logos/drafts"))
+        assertFalse("successful creation removes draft", logos.drafts.contains("draft-logo"))
+    }
+
+    @Test fun logoStorageFailureIsStructuredLogoFailure() = runTest {
+        seedWords(20)
+        logos.failPrepare = true
+        val result = repo.createGame(draftWithLogo("draft-logo"), words(20))
+        assertTrue(result is CreateGameResult.LogoFailure)
+        assertEquals(0, db.gameHistoryDao().gameSessionCount())
+    }
+
     @Test fun cancellationIsRethrownAndAdoptedLogosAreCleanedOnFailure() = runTest {
         seedWords(20)
         logos.cancel = true
@@ -81,11 +108,20 @@ class RoomGameRepositoryTest {
     private fun words(count: Int) = (1..count).map { Word("w$it", "word$it", "theme1", "Theme 1", 1) }
     private fun team(id: String) = TeamDraft(id, "Team $id", PlayerDraft("${id}p1", "A$id"), PlayerDraft("${id}p2", "B$id"), null)
     private fun draft() = NewGameDraft(listOf(TeamDraft("t1", "Team 1", PlayerDraft("p1", "Ann"), PlayerDraft("p2", "Bob"), null), TeamDraft("t2", "Team 2", PlayerDraft("p3", "Cat"), PlayerDraft("p4", "Dan"), null)), GameSettingsDraft(20, 1, 60, setOf("theme1")))
+    private fun draftWithLogo(path: String) = draft().copy(teams = draft().teams.mapIndexed { index, team -> if (index == 0) team.copy(logoPath = path) else team })
 
     private class FakeLogoStorage : TeamLogoStorage {
         var cancel = false
+        var failPrepare = false
+        val drafts = mutableSetOf("draft-logo")
+        val stableDeleted = mutableListOf<String>()
         override suspend fun copyToInternalStorage(sourceUri: android.net.Uri, teamDraftId: String, previousDraftPath: String?) = LogoStorageResult.Success("draft")
-        override suspend fun adoptDraftLogo(draftPath: String?, gameId: String, teamId: String): LogoStorageResult { if (cancel) throw CancellationException("cancel"); return LogoStorageResult.Success("") }
-        override suspend fun deleteAdoptedLogos(paths: Collection<String>) = Unit
+        override suspend fun prepareStableLogo(draftPath: String?, gameId: String, teamId: String): LogoStorageResult {
+            if (cancel) throw CancellationException("cancel")
+            if (failPrepare) return LogoStorageResult.Failure("logo failed", IllegalStateException("io"))
+            return LogoStorageResult.Success(draftPath?.let { "team_logos/games/$gameId/$teamId/logo" }.orEmpty())
+        }
+        override suspend fun deleteStableLogos(paths: Collection<String>) { stableDeleted += paths }
+        override suspend fun deleteDraftLogos(paths: Collection<String>) { drafts.removeAll(paths.toSet()) }
     }
 }

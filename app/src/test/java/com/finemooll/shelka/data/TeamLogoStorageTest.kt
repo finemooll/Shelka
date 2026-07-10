@@ -34,13 +34,15 @@ class TeamLogoStorageTest {
         val storage = AndroidTeamLogoStorage(context)
         assertTrue(storage.copyToInternalStorage(Uri.parse("content://missing/logo"), "team") is LogoStorageResult.Failure)
         val draft = storage.copyToInternalStorage(Uri.fromFile(textFile("source3.txt", "logo")), "team") as LogoStorageResult.Success
-        val adopted = storage.adoptDraftLogo(draft.internalPath, "game/../1", "team/../1") as LogoStorageResult.Success
+        val adopted = storage.prepareStableLogo(draft.internalPath, "game/../1", "team/../1") as LogoStorageResult.Success
         assertFalse(adopted.internalPath.contains("team_logos/drafts"))
         assertTrue(adopted.internalPath.contains("team_logos/games"))
-        assertFalse(File(draft.internalPath).exists())
+        assertTrue(File(draft.internalPath).exists())
         assertEquals("logo", File(adopted.internalPath).readText())
-        storage.deleteAdoptedLogos(listOf(adopted.internalPath))
+        storage.deleteStableLogos(listOf(adopted.internalPath))
         assertFalse(File(adopted.internalPath).exists())
+        storage.deleteDraftLogos(listOf(draft.internalPath))
+        assertFalse(File(draft.internalPath).exists())
     }
 
     private fun textFile(name: String, value: String): File = File(context.cacheDir, name).apply { writeText(value) }

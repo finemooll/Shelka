@@ -23,19 +23,23 @@ class RoomGameRepository(
         val errors = validateCreationInput(draft, selectedWords)
         if (errors.isNotEmpty()) return CreateGameResult.InvalidDraft(errors)
         val gameId = UUID.randomUUID().toString()
-        val adoptedLogos = mutableListOf<String>()
+        val stableLogos = mutableListOf<String>()
+        val draftLogosToDeleteOnSuccess = mutableListOf<String>()
         return try {
             val teamsWithStableLogos = mutableListOf<TeamDraft>()
             for (team in draft.teams) {
-                when (val logo = logoStorage.adoptDraftLogo(team.logoPath, gameId, team.id)) {
+                when (val logo = logoStorage.prepareStableLogo(team.logoPath, gameId, team.id)) {
                     is LogoStorageResult.Success -> {
                         val stable = team.copy(logoPath = logo.internalPath.ifBlank { null })
-                        stable.logoPath?.let(adoptedLogos::add)
+                        stable.logoPath?.let { stablePath ->
+                            stableLogos += stablePath
+                            team.logoPath?.let(draftLogosToDeleteOnSuccess::add)
+                        }
                         teamsWithStableLogos += stable
                     }
                     is LogoStorageResult.Failure -> {
-                        logoStorage.deleteAdoptedLogos(adoptedLogos)
-                        return CreateGameResult.InvalidDraft(listOf(logo.message))
+                        logoStorage.deleteStableLogos(stableLogos)
+                        return CreateGameResult.LogoFailure(logo.message, logo.cause)
                     }
                 }
             }
@@ -52,15 +56,16 @@ class RoomGameRepository(
                 }
                 selectedWords.forEachIndexed { index, word -> dao.insertSelectedWord(GameSelectedWordEntity(gameId, word.id, index)) }
             }
+            logoStorage.deleteDraftLogos(draftLogosToDeleteOnSuccess)
             CreateGameResult.Success(gameId)
         } catch (conflict: WordAvailabilityConflictException) {
-            logoStorage.deleteAdoptedLogos(adoptedLogos)
+            logoStorage.deleteStableLogos(stableLogos)
             CreateGameResult.WordConflict(conflict.wordIds)
         } catch (cancel: CancellationException) {
-            logoStorage.deleteAdoptedLogos(adoptedLogos)
+            logoStorage.deleteStableLogos(stableLogos)
             throw cancel
         } catch (t: Throwable) {
-            logoStorage.deleteAdoptedLogos(adoptedLogos)
+            logoStorage.deleteStableLogos(stableLogos)
             CreateGameResult.Failure(t)
         }
     }

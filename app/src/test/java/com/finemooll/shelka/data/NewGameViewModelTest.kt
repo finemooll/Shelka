@@ -68,6 +68,25 @@ class NewGameViewModelTest {
         Assert.assertFalse(cancelledVm.uiState.value.status is NewGameStatus.Error)
     }
 
+    @Test fun availableWordsExceptionClearsLoadingAndKeepsDraftEditable() = runTest {
+        val throwingRepo = FakeWordRepository(words(30), throwAvailable = true)
+        val vm = vm(wordRepository = throwingRepo)
+        makeValid(vm); vm.continueToSettings(); vm.startGame()
+        Assert.assertFalse(vm.uiState.value.isLoading)
+        Assert.assertFalse(vm.uiState.value.status is NewGameStatus.Creating)
+        Assert.assertNotNull(vm.uiState.value.fatalError)
+        Assert.assertNull(vm.uiState.value.createdGameId)
+    }
+
+    @Test fun logoFailureShowsRecoverableLogoMessage() = runTest {
+        val logoFailing = object : GameRepository { override suspend fun createGame(draft: NewGameDraft, selectedWords: List<Word>) = CreateGameResult.LogoFailure("Не удалось закрепить логотип", IllegalStateException("io")) }
+        val vm = vm(gameRepository = logoFailing)
+        makeValid(vm); vm.continueToSettings(); vm.startGame()
+        Assert.assertFalse(vm.uiState.value.isLoading)
+        Assert.assertEquals("Не удалось закрепить логотип", vm.uiState.value.fatalError)
+        Assert.assertTrue(vm.uiState.value.status is NewGameStatus.EditingSettings)
+    }
+
     private fun vm(
         wordRepository: FakeWordRepository = FakeWordRepository(words(30)),
         gameRepository: GameRepository = FakeGameRepository(),
@@ -84,15 +103,15 @@ class NewGameViewModelTest {
         vm.setDifficulty(1)
     }
 
-    private class FakeWordRepository(private val availableWords: List<Word>) : WordRepository {
+    private class FakeWordRepository(private val availableWords: List<Word>, private val throwAvailable: Boolean = false) : WordRepository {
         private val themes = (1..25).map { ThemeSummary("theme$it", if (it == 24) "Интим 18+" else if (it == 25) "Жёсткий 18+" else "Theme $it", 81, mapOf(1 to 27, 2 to 27, 3 to 27)) }
         override suspend fun ensureWordsImported() = com.finemooll.shelka.data.importer.ImportResult.AlreadyImported
         override suspend fun getAllWords() = availableWords
         override suspend fun getThemeSummaries() = themes
         override suspend fun getWordsByDifficultyAndThemes(difficulty: Int, themeIds: Set<String>) = availableWords.filter { it.difficulty == difficulty && it.themeId in themeIds }
-        override suspend fun getAvailableWords(difficulty: Int, themeIds: Set<String>) = getWordsByDifficultyAndThemes(difficulty, themeIds)
+        override suspend fun getAvailableWords(difficulty: Int, themeIds: Set<String>): List<Word> { if (throwAvailable) throw IllegalStateException("query failed"); return getWordsByDifficultyAndThemes(difficulty, themeIds) }
     }
     private class FakeGameRepository : GameRepository { var calls = 0; override suspend fun createGame(draft: NewGameDraft, selectedWords: List<Word>): CreateGameResult { calls++; return CreateGameResult.Success("game-$calls") } }
-    private class FakeLogoStorage : TeamLogoStorage { override suspend fun copyToInternalStorage(sourceUri: Uri, teamDraftId: String, previousDraftPath: String?) = LogoStorageResult.Success("internal"); override suspend fun adoptDraftLogo(draftPath: String?, gameId: String, teamId: String) = LogoStorageResult.Success(""); override suspend fun deleteAdoptedLogos(paths: Collection<String>) = Unit }
+    private class FakeLogoStorage : TeamLogoStorage { override suspend fun copyToInternalStorage(sourceUri: Uri, teamDraftId: String, previousDraftPath: String?) = LogoStorageResult.Success("internal"); override suspend fun prepareStableLogo(draftPath: String?, gameId: String, teamId: String) = LogoStorageResult.Success(""); override suspend fun deleteStableLogos(paths: Collection<String>) = Unit; override suspend fun deleteDraftLogos(paths: Collection<String>) = Unit }
     companion object { fun words(count: Int) = (1..count).map { Word("w$it", "word", "theme1", "Theme 1", 1) } }
 }
